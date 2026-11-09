@@ -149,7 +149,7 @@ class AccountSaleVatLedgerXlsx(models.AbstractModel):
                 ('third_rate', '% alicuota'), ('third_tax', 'Impuesto IVA'),
             ])
             columns.append(('exempt', 'Ventas Internas No gravadas'))
-        for rate in (16, 8, 15):
+        for rate in (16, 8):
             for emission in emissions:
                 columns.extend([
                     ('%s_base_%s' % (emission, rate), 'Base'),
@@ -206,7 +206,6 @@ class AccountSaleVatLedgerXlsx(models.AbstractModel):
         tax_widths = {
             16: {'manual': (103, 94, 110), 'digital': (114, 88, 113), 'fiscal': (93, 89, 104)},
             8: {'manual': (93, 82, 104), 'digital': (103, 81, 106), 'fiscal': (91, 88, 103)},
-            15: {'manual': (93, 83, 102), 'digital': (95, 78, 102), 'fiscal': (96, 78, 99)},
         }
         column_widths = {'partner': 285, 'branch': 285}
         for rate, widths in tax_widths.items():
@@ -233,7 +232,7 @@ class AccountSaleVatLedgerXlsx(models.AbstractModel):
                               header_row - 1, positions['third_tax'],
                               'Ventas por cuenta de terceros', header)
         sheet.merge_range(header_row - 3, positions['%s_base_16' % emissions[0]],
-                          header_row - 3, positions['%s_iva_15' % emissions[-1]],
+                          header_row - 3, positions['%s_iva_8' % emissions[-1]],
                           'Ventas Internas', header)
         emission_labels = {
             'manual': 'A Contribuyente Forma Libre',
@@ -243,7 +242,6 @@ class AccountSaleVatLedgerXlsx(models.AbstractModel):
         rate_labels = {
             16: 'Alicuota General',
             8: 'Alicuota Reducida',
-            15: 'Alicuota Adicional',
         }
         for rate, rate_label in rate_labels.items():
             for emission in emissions:
@@ -257,7 +255,7 @@ class AccountSaleVatLedgerXlsx(models.AbstractModel):
         numeric_keys = {'total', 'exempt', 'third_exempt', 'third_base', 'third_tax', 'withheld'}
         rate_keys = set()
         for emission in emissions:
-            for rate in (16, 8, 15):
+            for rate in rate_labels:
                 numeric_keys.update(('%s_base_%s' % (emission, rate), '%s_iva_%s' % (emission, rate)))
                 rate_keys.add('%s_alic_%s' % (emission, rate))
         identifier_keys = {
@@ -275,7 +273,7 @@ class AccountSaleVatLedgerXlsx(models.AbstractModel):
             previous = summaries.get(kind, (0.0, 0.0))
             summaries[kind] = (previous[0] + base, previous[1] + tax)
             if entry['emission'] in emissions:
-                for rate in (16, 8, 15):
+                for rate in rate_labels:
                     for key in ('base_%s' % rate, 'iva_%s' % rate, 'alic_%s' % rate):
                         values[entry['emission'] + '_' + key] = values.pop(key, '')
             for column, (key, label) in enumerate(columns):
