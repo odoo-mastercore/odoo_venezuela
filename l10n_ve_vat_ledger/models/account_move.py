@@ -15,30 +15,6 @@ _logger = logging.getLogger(__name__)
 class AccountMove(models.Model):
     _inherit = 'account.move'
 
-    l10n_ve_vat_book_emission = fields.Selection(
-        selection=[('manual', 'Forma libre'), ('digital', 'Factura digital')],
-        string='Emision para el Libro IVA',
-        compute='_compute_l10n_ve_vat_book_emission',
-        store=True,
-        readonly=False,
-        copy=True,
-        precompute=True,
-        tracking=True,
-    )
-
-    @api.depends('journal_id', 'move_type')
-    def _compute_l10n_ve_vat_book_emission(self):
-        for move in self:
-            move.l10n_ve_vat_book_emission = move._get_default_l10n_ve_vat_book_emission()
-
-    def _get_default_l10n_ve_vat_book_emission(self):
-        self.ensure_one()
-        return self.journal_id.l10n_ve_vat_book_emission or 'manual'
-
-    def _get_l10n_ve_vat_book_emission(self):
-        self.ensure_one()
-        return self.l10n_ve_vat_book_emission or 'manual'
-
     l10n_ve_purchase_type = fields.Selection(
         selection=[('national', 'Nacional'), ('import', 'Importación')],
         string='Tipo de compra',
