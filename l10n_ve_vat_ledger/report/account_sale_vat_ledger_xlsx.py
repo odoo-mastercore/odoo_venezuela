@@ -199,9 +199,22 @@ class AccountSaleVatLedgerXlsx(models.AbstractModel):
         first_data_row = header_row + 1
         for row in range(3, header_row):
             sheet.set_row(row, 24.7)
-        sheet.set_row(header_row, 26.57)
+        sheet.set_row(header_row, 26.55)
+        for row in range(3, first_data_row):
+            for column in range(len(columns)):
+                sheet.write_blank(row, column, None, header)
+        tax_widths = {
+            16: {'manual': (103, 94, 110), 'digital': (114, 88, 113), 'fiscal': (93, 89, 104)},
+            8: {'manual': (93, 82, 104), 'digital': (103, 81, 106), 'fiscal': (91, 88, 103)},
+            15: {'manual': (93, 83, 102), 'digital': (95, 78, 102), 'fiscal': (96, 78, 99)},
+        }
+        column_widths = {'partner': 285, 'branch': 285}
+        for rate, widths in tax_widths.items():
+            for emission in emissions:
+                for field, width in zip(('base', 'alic', 'iva'), widths[emission]):
+                    column_widths['%s_%s_%s' % (emission, field, rate)] = width
         for column, (key, label) in enumerate(columns):
-            sheet.set_column_pixels(column, column, 285 if key in ('partner', 'branch') else 189)
+            sheet.set_column_pixels(column, column, column_widths.get(key, 189))
             sheet.write(header_row, column, label, header)
         for label, keys in (
             ('Forma libre', ('manual_document',)),
@@ -305,3 +318,5 @@ class AccountSaleVatLedgerXlsx(models.AbstractModel):
         for warning in dict.fromkeys(warnings):
             row += 2
             sheet.merge_range(row, 0, row, 7, warning, title)
+        for detail_row in range(first_data_row, row + 1):
+            sheet.set_row(detail_row, 13.55)
