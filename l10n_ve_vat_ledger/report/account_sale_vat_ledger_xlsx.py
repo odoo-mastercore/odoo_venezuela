@@ -203,10 +203,10 @@ class AccountSaleVatLedgerXlsx(models.AbstractModel):
             company.vat or '',
         ), title)
         sheet.merge_range('A3:H3', ledger.name, title)
-        sheet.set_row(3, 475)
-        sheet.set_row(4, 475)
+        sheet.set_row(3, 24.7)
+        sheet.set_row(4, 26.57)
         for column, (key, label) in enumerate(columns):
-            sheet.set_column(column, column, 35 if key in ('partner', 'branch') else 23)
+            sheet.set_column_pixels(column, column, 285 if key in ('partner', 'branch') else 189)
             sheet.write(4, column, label, header)
         for label, keys in (
             ('Forma libre', ('manual_document',)),
