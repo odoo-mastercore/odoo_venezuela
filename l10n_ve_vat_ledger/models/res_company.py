@@ -9,15 +9,32 @@
 from odoo import fields, models
 
 
+SALE_VAT_BOOK_FORMATS = [
+    ('documents', 'Forma libre / factura digital'),
+    ('fiscal', 'Maquina fiscal con contingencia manual'),
+    ('mixed', 'Maquina fiscal y factura digital / forma libre'),
+    ('manual', 'Solo forma libre'),
+    ('digital', 'Solo factura digital'),
+    ('fiscal_only', 'Solo maquina fiscal'),
+    ('digital_fiscal', 'Factura digital y maquina fiscal'),
+]
+
+SALE_VAT_BOOK_EMISSIONS = {
+    'documents': ('manual', 'digital'),
+    'fiscal': ('manual', 'fiscal'),
+    'mixed': ('manual', 'digital', 'fiscal'),
+    'manual': ('manual',),
+    'digital': ('digital',),
+    'fiscal_only': ('fiscal',),
+    'digital_fiscal': ('digital', 'fiscal'),
+}
+
+
 class ResCompany(models.Model):
     _inherit = "res.company"
 
     l10n_ve_sale_vat_book_format = fields.Selection(
-        selection=[
-            ('documents', 'Forma libre / factura digital'),
-            ('fiscal', 'Maquina fiscal con contingencia manual'),
-            ('mixed', 'Maquina fiscal y factura digital / forma libre'),
-        ],
+        selection=SALE_VAT_BOOK_FORMATS,
         string='Formato del Libro IVA de ventas',
         required=True,
         default='documents',

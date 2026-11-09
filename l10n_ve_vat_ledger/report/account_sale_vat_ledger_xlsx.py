@@ -17,6 +17,16 @@ class AccountSaleVatLedgerXlsx(models.AbstractModel):
     def _get_sale_book_entries(self, ledger):
         invoices, withholdings = ledger._get_sale_book_source_data()
         layout = ledger.sale_book_format or 'documents'
+        emissions = ledger._get_sale_book_emissions()
+        unconfigured = invoices.filtered(
+            lambda move: move._get_l10n_ve_vat_book_emission() not in emissions
+        )
+        if unconfigured:
+            raise UserError(_(
+                'Estos documentos utilizan modalidades de emision no incluidas en el libro: %s. '
+                'Revise la configuracion de la compania y genere el libro con esas modalidades.',
+                ', '.join(unconfigured[:10].mapped('display_name')),
+            ))
         fiscal_moves = invoices.filtered(
             lambda move: move._get_l10n_ve_vat_book_emission() == 'fiscal'
         )
@@ -45,13 +55,9 @@ class AccountSaleVatLedgerXlsx(models.AbstractModel):
             kind = self._get_vat_book_document_kind(move)
             canceled = move.state == 'cancel'
             document = move._get_name_vat_ledger() or ''
-            document_label = labels[kind]
-            if emission == 'digital':
-                document_label = 'Factura Digital' if kind == 'invoice' else document_label + ' - Factura Digital'
             values = {
                 'date': move.invoice_date or move.date,
-                'document_type': document_label,
-                'document': document, 'control': move.l10n_ve_control_number or '',
+                'document_type': labels[kind],
                 'partner': 'ANULADA' if canceled else (move.partner_id.name or ''),
                 'vat': '%s-%s' % (
                     move.partner_id.l10n_latam_identification_type_id.l10n_ve_code or '',
@@ -64,9 +70,10 @@ class AccountSaleVatLedgerXlsx(models.AbstractModel):
                 values['affected'] = move._get_reverse_name_vat_ledger() or ''
             elif kind == 'debit_note' and move.debit_origin_id:
                 values['affected'] = move._get_debit_name_vat_ledger() or ''
-            values['manual_invoice'] = document if kind == 'invoice' else ''
-            values['manual_control'] = values['control']
-            values['manual_debit'] = document if kind == 'debit_note' else ''
+            values[emission + '_document'] = document
+            if emission == 'digital':
+                values['digital_control'] = move.l10n_ve_control_number or ''
+            values['debit_document'] = document if kind == 'debit_note' else ''
             values['credit_document'] = document if kind == 'credit_note' else ''
             breakdown = self._get_move_vat_breakdown(move)
             values['exempt'] = 0.0 if canceled else breakdown['base_exempt']
@@ -108,27 +115,32 @@ class AccountSaleVatLedgerXlsx(models.AbstractModel):
         return entries, warnings
 
     def _get_sale_book_columns(self, ledger):
-        fiscal = ledger.sale_book_format in ('fiscal', 'mixed')
+        emissions = ledger._get_sale_book_emissions()
+        fiscal = 'fiscal' in emissions
+        columns = [
+            ('operation', 'Nro. operacion'), ('date', 'Fecha del documento'),
+            ('document_type', 'Tipo de documento'),
+            ('vat', 'RIF'), ('partner', 'Nombre o razon social'),
+        ]
+        if 'manual' in emissions:
+            columns.append(('manual_document', 'Nro. de documento'))
+        if 'digital' in emissions:
+            columns.extend([
+                ('digital_document', 'Nro. de documento'),
+                ('digital_control', 'Nro. de control'),
+            ])
         if fiscal:
-            columns = [
-                ('date', 'Fecha del documento'), ('document_type', 'Tipo de documento'),
-                ('vat', 'RIF'), ('partner', 'Nombre o razon social'),
-                ('manual_invoice', 'Nro. factura forma libre / digital'),
-                ('manual_control', 'Nro. control forma libre / digital'),
-                ('manual_debit', 'Nro. nota de debito forma libre / digital'),
+            columns.extend([
                 ('z_number', 'Nro. reporte Z'), ('printer', 'Maquina fiscal'),
-                ('invoice_from', 'Factura desde'), ('invoice_to', 'Factura hasta'),
-                ('debit_document', 'Nro. nota de debito fiscal'),
-                ('credit_document', 'Nro. nota de credito'), ('affected', 'Factura afectada'),
-            ]
-        else:
-            columns = [
-                ('operation', 'Nro. operacion'), ('date', 'Fecha del documento'),
-                ('document_type', 'Tipo de documento'), ('document', 'Numero de documento'),
-                ('control', 'Numero de control'), ('voucher', 'Numero comprobante de retencion IVA'),
-                ('affected', 'Factura afectada'),
-                ('partner', 'Nombre o razon social'), ('vat', 'RIF'),
-            ]
+                ('invoice_from', 'Primer Nro. de factura'),
+                ('invoice_to', 'Ultimo Nro. de factura'),
+            ])
+        columns.extend([
+            ('debit_document', 'Nro. nota de debito'),
+            ('credit_document', 'Nro. nota de credito'), ('affected', 'Factura afectada'),
+        ])
+        if not fiscal:
+            columns.append(('voucher', 'Numero comprobante de retencion IVA'))
         if ledger.sale_book_scope == 'consolidated':
             columns.append(('branch', 'Principal / sucursal'))
         columns.append(('total', 'Total Venta Incluyendo el IVA'))
@@ -195,6 +207,18 @@ class AccountSaleVatLedgerXlsx(models.AbstractModel):
         for column, (key, label) in enumerate(columns):
             sheet.set_column(column, column, 35 if key in ('partner', 'branch') else 23)
             sheet.write(4, column, label, header)
+        for label, keys in (
+            ('Forma libre', ('manual_document',)),
+            ('Factura Digital', ('digital_document', 'digital_control')),
+            ('Maquina fiscal', ('z_number', 'printer', 'invoice_from', 'invoice_to')),
+        ):
+            if keys[0] not in positions:
+                continue
+            first, last = positions[keys[0]], positions[keys[-1]]
+            if first == last:
+                sheet.write(3, first, label, header)
+            else:
+                sheet.merge_range(3, first, 3, last, label, header)
         if 'third_base' in positions:
             sheet.merge_range(3, positions['third_exempt'], 3, positions['third_tax'],
                               'Ventas por cuenta de terceros', header)
@@ -211,8 +235,8 @@ class AccountSaleVatLedgerXlsx(models.AbstractModel):
             for rate in (16, 8, 15):
                 numeric_keys.update((prefix + 'base_%s' % rate, prefix + 'iva_%s' % rate))
         identifier_keys = {
-            'operation', 'document', 'control', 'voucher', 'affected', 'vat',
-            'manual_invoice', 'manual_control', 'manual_debit', 'z_number', 'printer',
+            'operation', 'manual_document', 'digital_document', 'digital_control',
+            'voucher', 'affected', 'vat', 'z_number', 'printer',
             'invoice_from', 'invoice_to', 'debit_document', 'credit_document', 'third_rate',
         }
         totals = dict.fromkeys(numeric_keys, 0.0)
