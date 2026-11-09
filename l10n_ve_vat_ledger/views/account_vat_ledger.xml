@@ -42,8 +42,7 @@
                                 widget="many2many_tags"
                                 readonly="1"
                             />
-                            <field name="sale_book_format" invisible="1"/>
-                            <field name="sale_book_emissions" invisible="type != 'sale'" readonly="1"/>
+                            <field name="sale_book_format" invisible="type != 'sale'" readonly="1"/>
                             <field
                                 name="sale_book_scope"
                                 invisible="type != 'sale' or not sale_book_can_consolidate"

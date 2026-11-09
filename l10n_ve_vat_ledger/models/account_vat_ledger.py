@@ -10,7 +10,6 @@ from odoo import models, fields, api, _, Command
 from odoo.exceptions import AccessError, UserError
 from odoo.osv import expression
 from odoo.tools import format_date
-from .res_company import SALE_VAT_BOOK_EMISSIONS, SALE_VAT_BOOK_FORMATS
 import logging
 
 _logger = logging.getLogger(__name__)
@@ -95,11 +94,6 @@ class AccountVatLedger(models.Model):
         string='Formato de ventas',
         compute='_compute_sale_book_format', store=True, readonly=False, copy=True,
     )
-    sale_book_emissions = fields.Selection(
-        selection=SALE_VAT_BOOK_FORMATS,
-        string='Modalidades de emision',
-        compute='_compute_sale_book_emissions', store=True, copy=True,
-    )
     sale_book_scope = fields.Selection(
         [('own', 'Movimientos propios'), ('consolidated', 'Consolidado')],
         string='Alcance', default='own', required=True,
@@ -112,32 +106,15 @@ class AccountVatLedger(models.Model):
     @api.depends('company_id', 'type')
     def _compute_sale_book_format(self):
         for ledger in self:
-            configuration = ledger.company_id.l10n_ve_sale_vat_book_format or 'documents'
-            ledger.sale_book_format = ledger._get_sale_book_layout(configuration)
-
-    @api.model
-    def _get_sale_book_layout(self, configuration):
-        emissions = SALE_VAT_BOOK_EMISSIONS[configuration]
-        # Keep the three layout keys consumed by the report Z integration.
-        return (
-            'mixed' if 'fiscal' in emissions and 'digital' in emissions
-            else 'fiscal' if 'fiscal' in emissions else 'documents'
-        )
-
-    @api.depends('company_id', 'type', 'sale_book_format')
-    def _compute_sale_book_emissions(self):
-        for ledger in self:
-            configuration = ledger.company_id.l10n_ve_sale_vat_book_format or 'documents'
-            # Existing books retain their stored layout when company settings changed.
-            ledger.sale_book_emissions = (
-                configuration if ledger.sale_book_format == ledger._get_sale_book_layout(configuration)
-                else ledger.sale_book_format or 'documents'
-            )
+            ledger.sale_book_format = ledger.company_id.l10n_ve_sale_vat_book_format or 'documents'
 
     def _get_sale_book_emissions(self):
         self.ensure_one()
-        configuration = self.sale_book_emissions or self.sale_book_format or 'documents'
-        return SALE_VAT_BOOK_EMISSIONS[configuration]
+        return {
+            'documents': ('manual', 'digital'),
+            'fiscal': ('manual', 'fiscal'),
+            'mixed': ('manual', 'digital', 'fiscal'),
+        }[self.sale_book_format or 'documents']
 
     def _get_sale_book_companies(self):
         self.ensure_one()
@@ -316,14 +293,14 @@ class AccountVatLedger(models.Model):
     def action_present(self):
         for ledger in self.filtered(lambda item: item.type == 'sale'):
             if not ledger.sale_book_format:
-                ledger._compute_sale_book_format()
+                ledger.sale_book_format = ledger.company_id.l10n_ve_sale_vat_book_format
             if ledger.sale_book_format != 'documents' and not ledger._has_sale_book_fiscal_source():
                 raise UserError(_('El formato fiscal requiere una integracion de reportes Z instalada.'))
             ledger._get_sale_book_companies()
         self.write({'state': 'presented'})
 
     def write(self, values):
-        if {'sale_book_format', 'sale_book_emissions', 'sale_book_scope'} & values.keys():
+        if {'sale_book_format', 'sale_book_scope'} & values.keys():
             if any(ledger.type == 'sale' and ledger.state != 'draft' for ledger in self):
                 raise UserError(_('Restablezca el libro a borrador antes de cambiar su formato o alcance.'))
         return super().write(values)
