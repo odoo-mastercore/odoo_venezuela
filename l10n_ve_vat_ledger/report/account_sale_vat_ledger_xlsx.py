@@ -135,10 +135,7 @@ class AccountSaleVatLedgerXlsx(models.AbstractModel):
                 ('invoice_from', 'Primer Nro. de factura'),
                 ('invoice_to', 'Ultimo Nro. de factura'),
             ])
-        columns.extend([
-            ('debit_document', 'Nro. nota de debito'),
-            ('credit_document', 'Nro. nota de credito'), ('affected', 'Factura afectada'),
-        ])
+        columns.append(('affected', 'Factura afectada'))
         if not fiscal:
             columns.append(('voucher', 'Numero comprobante de retencion IVA'))
         if ledger.sale_book_scope == 'consolidated':
