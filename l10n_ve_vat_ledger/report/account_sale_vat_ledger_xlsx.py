@@ -81,8 +81,16 @@ class AccountSaleVatLedgerXlsx(models.AbstractModel):
                 for key in ('base_%s' % rate, 'iva_%s' % rate):
                     values[key] = 0.0 if canceled else breakdown[key]
                 values['alic_%s' % rate] = '' if canceled else breakdown['alic_%s' % rate]
+            additional_lines = move.line_ids.filtered(
+                lambda line: line.tax_line_id
+                and round(abs(line.tax_line_id.amount), 2) == 31.0
+            )
+            sign = -1 if kind == 'credit_note' else 1
+            additional_base = 0.0 if canceled else sign * sum(abs(line.tax_base_amount) for line in additional_lines)
+            additional_tax = 0.0 if canceled else sign * sum(abs(line.balance) for line in additional_lines)
             entries.append({'values': values, 'emission': emission, 'kind': kind,
-                            'company_id': move.company_id.id, 'id': move.id})
+                            'company_id': move.company_id.id, 'id': move.id,
+                            'summary_31': (additional_base, additional_tax)})
         for withholding in withholdings:
             related_moves = self._get_withholding_related_moves(withholding)
             if related_moves:
@@ -106,13 +114,73 @@ class AccountSaleVatLedgerXlsx(models.AbstractModel):
                 'withholding_date': withholding.date or withholding.payment_id.date,
                 'withheld': self._get_sale_withholding_signed_amount(withholding),
             }
+            tax_lines = withholding.l10n_ve_move_line_taxes_ids or related_moves.line_ids.filtered(
+                lambda line: line.tax_line_id
+            )
+            weights = {}
+            for line in tax_lines:
+                rate = round(abs(line.tax_line_id.amount), 2)
+                if rate not in (16, 8, 31) or not line.balance:
+                    continue
+                kind = self._get_vat_book_document_kind(line.move_id)
+                key = ('invoice' if rate == 31 else kind, int(rate))
+                weights[key] = weights.get(key, 0.0) + abs(line.balance)
             entries.append({'values': values, 'emission': '', 'kind': 'withholding',
-                            'company_id': withholding.company_id.id, 'id': withholding.id})
+                            'company_id': withholding.company_id.id, 'id': withholding.id,
+                            'summary_withholding_weights': weights})
         entries.sort(key=lambda entry: (
             entry['values']['date'], entry['company_id'],
             entry['values'].get('printer', ''), entry['id'], entry['kind'],
         ))
         return entries, warnings
+
+    def _get_sale_book_summary(self, ledger, entries):
+        labels = [
+            (('invoice', 'exempt'), 'Total Ventas Internas No Gravadas'),
+            (('credit_note', 'exempt'), 'Total Notas de Crédito No Gravadas'),
+            (('debit_note', 'exempt'), 'Total Notas de Débito No Gravadas'),
+            (('export', 'exempt'), 'Total Ventas de Exportación'),
+            (('invoice', 16), 'Total Ventas Internas afectadas sólo alícuota general (16,00%)'),
+            (('invoice', 8), 'Total Ventas Internas afectadas sólo alícuota reducida (8,00%)'),
+            (('invoice', 31), 'Total Ventas Internas afectadas más adicional (31,00%)'),
+            (('credit_note', 16), 'Total Notas de Crédito aplicadas en Ventas (16,00%)'),
+            (('credit_note', 8), 'Total Notas de Crédito aplicadas en Ventas (8,00%)'),
+            (('debit_note', 16), 'Total Notas de Débito aplicadas en Ventas (16,00%)'),
+            (('debit_note', 8), 'Total Notas de Débito aplicadas en Ventas (8,00%)'),
+        ]
+        amounts = {key: [0.0, 0.0, 0.0, 0.0] for key, label in labels}
+        grand_total = [0.0, 0.0, 0.0, 0.0]
+        currency = ledger.company_id.currency_id
+        for entry in entries:
+            values = entry['values']
+            grand_total[0] += values.get('total', 0.0)
+            grand_total[3] += values.get('withheld', 0.0)
+            if entry['kind'] == 'withholding':
+                weights = entry.get('summary_withholding_weights', {})
+                total_weight = sum(weights.values())
+                if not total_weight:
+                    continue
+                remaining = values.get('withheld', 0.0)
+                for index, (key, weight) in enumerate(weights.items()):
+                    allocated = remaining if index == len(weights) - 1 else currency.round(
+                        values.get('withheld', 0.0) * weight / total_weight
+                    )
+                    amounts[key][3] += allocated
+                    remaining -= allocated
+                continue
+            kind = 'invoice' if entry['kind'] == 'fiscal' else entry['kind']
+            additional_base, additional_tax = entry.get('summary_31', (0.0, 0.0))
+            amounts[(kind, 'exempt')][0] += values.get('exempt', 0.0) - additional_base
+            for rate in (16, 8, 31):
+                base = additional_base if rate == 31 else values.get('base_%s' % rate, 0.0)
+                tax = additional_tax if rate == 31 else values.get('iva_%s' % rate, 0.0)
+                key = ('invoice' if rate == 31 else kind, rate)
+                amounts[key][0] += base + tax
+                amounts[key][1] += base
+                amounts[key][2] += tax
+                grand_total[1] += base
+                grand_total[2] += tax
+        return [(label, amounts[key]) for key, label in labels], grand_total
 
     def _get_sale_book_columns(self, ledger):
         emissions = ledger._get_sale_book_emissions()
@@ -264,14 +332,8 @@ class AccountSaleVatLedgerXlsx(models.AbstractModel):
             'invoice_from', 'invoice_to', 'debit_document', 'credit_document', 'third_rate',
         }
         totals = dict.fromkeys(numeric_keys, 0.0)
-        summaries = {}
         for row, entry in enumerate(entries, start=first_data_row):
             values = dict(entry['values'], operation=row - first_data_row + 1)
-            base = values.get('exempt', 0.0) + sum(values.get('base_%s' % rate, 0.0) for rate in (16, 8, 15))
-            tax = sum(values.get('iva_%s' % rate, 0.0) for rate in (16, 8, 15))
-            kind = entry['kind']
-            previous = summaries.get(kind, (0.0, 0.0))
-            summaries[kind] = (previous[0] + base, previous[1] + tax)
             if entry['emission'] in emissions:
                 for rate in rate_labels:
                     for key in ('base_%s' % rate, 'iva_%s' % rate, 'alic_%s' % rate):
@@ -294,27 +356,27 @@ class AccountSaleVatLedgerXlsx(models.AbstractModel):
         for column, (key, label) in enumerate(columns):
             sheet.write(row, column, 'TOTAL' if key == 'partner' else totals.get(key, ''),
                         total_label if key == 'partner' else total_format)
+        for detail_row in range(first_data_row, row + 1):
+            sheet.set_row(detail_row, 13.55)
         row += 4
-        sheet.merge_range(row, 0, row, 3, 'RESUMEN GENERAL', header)
-        for column, label in enumerate(('Base / exentos', 'Debito fiscal', 'IVA retenido'), start=4):
+        sheet.set_row(row, 40)
+        for column, label in enumerate((
+            'RESUMEN GENERAL', 'Total Ventas incluyendo IVA', 'Base imponible',
+            'Débito Fiscal', 'IVA Retenido por Clientes',
+        )):
             sheet.write(row, column, label, header)
-        summary_labels = (
-            ('invoice', 'Facturas'), ('credit_note', 'Notas de credito'),
-            ('debit_note', 'Notas de debito'), ('fiscal', 'Reportes Z (neto de NC/ND)'),
-        )
-        for kind, label in summary_labels:
+        summary, grand_total = self._get_sale_book_summary(ledger, entries)
+        for label, amounts in summary:
             row += 1
-            base, tax = summaries.get(kind, (0.0, 0.0))
-            sheet.merge_range(row, 0, row, 3, label, title)
-            sheet.write(row, 4, self._round_book_amount(base), number)
-            sheet.write(row, 5, self._round_book_amount(tax), number)
+            sheet.set_row(row, 54 if len(label) > 45 else 30)
+            sheet.write(row, 0, label, title)
+            for column, amount in enumerate(amounts, start=1):
+                sheet.write_number(row, column, self._round_book_amount(amount), number)
         row += 1
-        sheet.merge_range(row, 0, row, 3, 'TOTAL', total_label)
-        sheet.write(row, 4, self._round_book_amount(sum(value[0] for value in summaries.values())), total_format)
-        sheet.write(row, 5, self._round_book_amount(sum(value[1] for value in summaries.values())), total_format)
-        sheet.write(row, 6, self._round_book_amount(totals['withheld']), total_format)
+        sheet.set_row(row, 26.55)
+        sheet.write(row, 0, 'TOTAL GENERAL', total_label)
+        for column, amount in enumerate(grand_total, start=1):
+            sheet.write_number(row, column, self._round_book_amount(amount), total_format)
         for warning in dict.fromkeys(warnings):
             row += 2
             sheet.merge_range(row, 0, row, 7, warning, title)
-        for detail_row in range(first_data_row, row + 1):
-            sheet.set_row(detail_row, 13.55)
