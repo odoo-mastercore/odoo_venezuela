@@ -275,7 +275,10 @@ class AccountSaleVatLedgerXlsx(models.AbstractModel):
             16: {'manual': (103, 94, 110), 'digital': (114, 88, 113), 'fiscal': (93, 89, 104)},
             8: {'manual': (93, 82, 104), 'digital': (103, 81, 106), 'fiscal': (91, 88, 103)},
         }
-        column_widths = {'partner': 285, 'branch': 285}
+        column_widths = {
+            'operation': 128, 'date': 131, 'document_type': 129,
+            'vat': 124, 'partner': 247, 'branch': 285,
+        }
         for rate, widths in tax_widths.items():
             for emission in emissions:
                 for field, width in zip(('base', 'alic', 'iva'), widths[emission]):
@@ -354,7 +357,7 @@ class AccountSaleVatLedgerXlsx(models.AbstractModel):
                     totals[key] += value
         row = first_data_row + len(entries)
         for column, (key, label) in enumerate(columns):
-            sheet.write(row, column, 'TOTAL' if key == 'partner' else totals.get(key, ''),
+            sheet.write(row, column, totals.get(key, ''),
                         total_label if key == 'partner' else total_format)
         for detail_row in range(first_data_row, row + 1):
             sheet.set_row(detail_row, 13.55)
@@ -366,9 +369,10 @@ class AccountSaleVatLedgerXlsx(models.AbstractModel):
         )):
             sheet.write(row, column, label, header)
         summary, grand_total = self._get_sale_book_summary(ledger, entries)
-        for label, amounts in summary:
+        summary_heights = (26.55, 30, 30, 30, 54, 54, 54, 54, 54, 54, 49.95)
+        for index, (label, amounts) in enumerate(summary):
             row += 1
-            sheet.set_row(row, 54 if len(label) > 45 else 30)
+            sheet.set_row(row, summary_heights[index])
             sheet.write(row, 0, label, title)
             for column, amount in enumerate(amounts, start=1):
                 sheet.write_number(row, column, self._round_book_amount(amount), number)
