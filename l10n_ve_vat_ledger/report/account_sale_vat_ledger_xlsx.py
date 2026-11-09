@@ -150,17 +150,11 @@ class AccountSaleVatLedgerXlsx(models.AbstractModel):
             ])
             columns.append(('exempt', 'Ventas Internas No gravadas'))
         for rate in (16, 8, 15):
-            columns.extend([
-                ('base_%s' % rate, 'Base imponible'),
-                ('alic_%s' % rate, 'Alicuota %s%%' % rate),
-                ('iva_%s' % rate, 'Impuesto IVA'),
-            ])
-        if ledger.sale_book_format == 'mixed':
-            for rate in (16, 8, 15):
+            for emission in emissions:
                 columns.extend([
-                    ('digital_base_%s' % rate, 'Base imponible'),
-                    ('digital_alic_%s' % rate, 'Alicuota %s%%' % rate),
-                    ('digital_iva_%s' % rate, 'Impuesto IVA'),
+                    ('%s_base_%s' % (emission, rate), 'Base'),
+                    ('%s_alic_%s' % (emission, rate), '%'),
+                    ('%s_iva_%s' % (emission, rate), 'Impuesto'),
                 ])
         if fiscal:
             columns.extend([
@@ -174,6 +168,7 @@ class AccountSaleVatLedgerXlsx(models.AbstractModel):
         ledger = ledger.with_context(ledger._get_sale_book_context())
         self = self.with_context(ledger.env.context)
         entries, warnings = self._get_sale_book_entries(ledger)
+        emissions = ledger._get_sale_book_emissions()
         columns = self._get_sale_book_columns(ledger)
         positions = {key: column for column, (key, label) in enumerate(columns)}
         sheet = workbook.add_worksheet(ledger.name[:31])
@@ -200,11 +195,14 @@ class AccountSaleVatLedgerXlsx(models.AbstractModel):
             company.vat or '',
         ), title)
         sheet.merge_range('A3:H3', ledger.name, title)
-        sheet.set_row(3, 24.7)
-        sheet.set_row(4, 26.57)
+        header_row = 6
+        first_data_row = header_row + 1
+        for row in range(3, header_row):
+            sheet.set_row(row, 24.7)
+        sheet.set_row(header_row, 26.57)
         for column, (key, label) in enumerate(columns):
             sheet.set_column_pixels(column, column, 285 if key in ('partner', 'branch') else 189)
-            sheet.write(4, column, label, header)
+            sheet.write(header_row, column, label, header)
         for label, keys in (
             ('Forma libre', ('manual_document',)),
             ('Factura Digital', ('digital_document', 'digital_control')),
@@ -214,24 +212,41 @@ class AccountSaleVatLedgerXlsx(models.AbstractModel):
                 continue
             first, last = positions[keys[0]], positions[keys[-1]]
             if first == last:
-                sheet.write(3, first, label, header)
+                sheet.write(header_row - 1, first, label, header)
             else:
-                sheet.merge_range(3, first, 3, last, label, header)
+                sheet.merge_range(header_row - 1, first, header_row - 1, last, label, header)
         if 'third_base' in positions:
-            sheet.merge_range(3, positions['third_exempt'], 3, positions['third_tax'],
+            sheet.merge_range(header_row - 1, positions['third_exempt'],
+                              header_row - 1, positions['third_tax'],
                               'Ventas por cuenta de terceros', header)
-        sheet.merge_range(3, positions['exempt'] if ledger.sale_book_format == 'documents' else positions['base_16'],
-                          3, positions['iva_15'],
-                          'Contribuyente' if ledger.sale_book_format != 'mixed'
-                          else 'Contribuyente - Maquina fiscal / forma libre', header)
-        if 'digital_base_16' in positions:
-            sheet.merge_range(3, positions['digital_base_16'], 3, positions['digital_iva_15'],
-                              'Contribuyente - Factura Digital', header)
+        sheet.merge_range(header_row - 3, positions['%s_base_16' % emissions[0]],
+                          header_row - 3, positions['%s_iva_15' % emissions[-1]],
+                          'Ventas Internas', header)
+        emission_labels = {
+            'manual': 'A Contribuyente Forma Libre',
+            'digital': 'A Contribuyente Factura Digital',
+            'fiscal': 'A Contribuyente Maquina Fiscal',
+        }
+        rate_labels = {
+            16: 'Alicuota General',
+            8: 'Alicuota Reducida',
+            15: 'Alicuota Adicional',
+        }
+        for rate, rate_label in rate_labels.items():
+            for emission in emissions:
+                first = positions['%s_base_%s' % (emission, rate)]
+                last = positions['%s_iva_%s' % (emission, rate)]
+                sheet.merge_range(header_row - 2, first, header_row - 2, last,
+                                  emission_labels[emission], header)
+                sheet.merge_range(header_row - 1, first, header_row - 1, last,
+                                  rate_label, header)
 
         numeric_keys = {'total', 'exempt', 'third_exempt', 'third_base', 'third_tax', 'withheld'}
-        for prefix in ('', 'digital_'):
+        rate_keys = set()
+        for emission in emissions:
             for rate in (16, 8, 15):
-                numeric_keys.update((prefix + 'base_%s' % rate, prefix + 'iva_%s' % rate))
+                numeric_keys.update(('%s_base_%s' % (emission, rate), '%s_iva_%s' % (emission, rate)))
+                rate_keys.add('%s_alic_%s' % (emission, rate))
         identifier_keys = {
             'operation', 'manual_document', 'digital_document', 'digital_control',
             'voucher', 'affected', 'vat', 'z_number', 'printer',
@@ -239,22 +254,22 @@ class AccountSaleVatLedgerXlsx(models.AbstractModel):
         }
         totals = dict.fromkeys(numeric_keys, 0.0)
         summaries = {}
-        for row, entry in enumerate(entries, start=5):
-            values = dict(entry['values'], operation=row - 4)
+        for row, entry in enumerate(entries, start=first_data_row):
+            values = dict(entry['values'], operation=row - first_data_row + 1)
             base = values.get('exempt', 0.0) + sum(values.get('base_%s' % rate, 0.0) for rate in (16, 8, 15))
             tax = sum(values.get('iva_%s' % rate, 0.0) for rate in (16, 8, 15))
             kind = entry['kind']
             previous = summaries.get(kind, (0.0, 0.0))
             summaries[kind] = (previous[0] + base, previous[1] + tax)
-            if ledger.sale_book_format == 'mixed' and entry['emission'] == 'digital':
+            if entry['emission'] in emissions:
                 for rate in (16, 8, 15):
                     for key in ('base_%s' % rate, 'iva_%s' % rate, 'alic_%s' % rate):
-                        values['digital_' + key] = values.pop(key, '')
+                        values[entry['emission'] + '_' + key] = values.pop(key, '')
             for column, (key, label) in enumerate(columns):
                 value = values.get(key, '')
                 style = date_format if key in ('date', 'withholding_date') else (
                     number if key in numeric_keys else (
-                        centered_text if key in identifier_keys or key.startswith(('alic_', 'digital_alic_')) else text
+                        centered_text if key in identifier_keys or key in rate_keys else text
                     )
                 )
                 # Document numbers are strings so fiscal leading zeros survive.
@@ -264,7 +279,7 @@ class AccountSaleVatLedgerXlsx(models.AbstractModel):
                     sheet.write(row, column, value, style)
                 if key in totals and isinstance(value, (int, float)):
                     totals[key] += value
-        row = 5 + len(entries)
+        row = first_data_row + len(entries)
         for column, (key, label) in enumerate(columns):
             sheet.write(row, column, 'TOTAL' if key == 'partner' else totals.get(key, ''),
                         total_label if key == 'partner' else total_format)
