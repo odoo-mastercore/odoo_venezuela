@@ -17,7 +17,7 @@
     """,
     'author': "SINAPSYS GLOBAL SA || MASTERCORE SAS",
     'website': "https://mastercore.us",
-    'version': '19.0.1.0.8',
+    'version': '19.0.1.0.10',
     'countries': ['ve'],
     'category': 'Accounting/Localizations',
     'license': 'AGPL-3',
@@ -49,7 +49,8 @@
         'views/seniat_tabla_islr_view.xml',
         'views/product_template.xml',
         'views/l10n_ve_payment_withholding.xml',
-        'views/res_config_settings.xml'
+        'views/res_config_settings.xml',
+        'wizard/customer_vat_withholding_views.xml',
     ],
     'installable': True,
     'post_init_hook': '_l10n_ve_wth_post_init',

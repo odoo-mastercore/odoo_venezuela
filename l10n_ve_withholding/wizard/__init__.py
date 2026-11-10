@@ -8,3 +8,4 @@
 ###############################################################################
 from . import account_move_reverse
 from . import account_debit_note
+from . import customer_vat_withholding

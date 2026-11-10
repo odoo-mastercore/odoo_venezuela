@@ -12,6 +12,15 @@ from odoo import fields, models
 class ResConfigSettings(models.TransientModel):
     _inherit = 'res.config.settings'
 
+    l10n_ve_customer_vat_withholding = fields.Boolean(
+        related='company_id.l10n_ve_customer_vat_withholding',
+        readonly=False,
+    )
+    l10n_ve_customer_vat_withholding_rate = fields.Selection(
+        related='company_id.l10n_ve_customer_vat_withholding_rate',
+        readonly=False,
+    )
+
     l10n_ve_tax_base_account_id = fields.Many2one(
         comodel_name='account.account',
         related='company_id.l10n_ve_tax_base_account_id',

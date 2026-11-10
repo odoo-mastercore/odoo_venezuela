@@ -18,6 +18,45 @@
         <field name="model">account.payment</field>
         <field name="inherit_id" ref="account_payment_pro.latam_check_view_account_payment_form_inherited" />
         <field name="arch" type="xml">
+            <xpath expr="//field[@name='memo']" position="after">
+                <field name="l10n_ve_customer_vat_invoice_id" invisible="not l10n_ve_customer_vat_invoice_id"/>
+            </xpath>
+            <xpath expr="//field[@name='amount']" position="attributes">
+                <attribute name="readonly" add="l10n_ve_customer_vat_invoice_id" separator=" or "/>
+            </xpath>
+            <xpath expr="//field[@name='journal_id']" position="attributes">
+                <attribute name="readonly" add="l10n_ve_customer_vat_invoice_id" separator=" or "/>
+            </xpath>
+            <xpath expr="//group[@name='group1']/field[@name='partner_id'][1]" position="attributes">
+                <attribute name="readonly" add="l10n_ve_customer_vat_invoice_id" separator=" or "/>
+            </xpath>
+            <xpath expr="//group[@name='group1']/field[@name='company_id']" position="attributes">
+                <attribute name="readonly" add="l10n_ve_customer_vat_invoice_id" separator=" or "/>
+            </xpath>
+            <xpath expr="//field[@name='payment_type']" position="attributes">
+                <attribute name="readonly" add="l10n_ve_customer_vat_invoice_id" separator=" or "/>
+            </xpath>
+            <xpath expr="//field[@name='payment_method_line_id']" position="attributes">
+                <attribute name="readonly" add="l10n_ve_customer_vat_invoice_id" separator=" or "/>
+            </xpath>
+            <xpath expr="//field[@name='to_pay_move_line_ids']" position="attributes">
+                <attribute name="readonly" add="l10n_ve_customer_vat_invoice_id" separator=" or "/>
+            </xpath>
+            <xpath expr="//field[@name='user_counterpart_rate']" position="attributes">
+                <attribute name="readonly" add="l10n_ve_customer_vat_invoice_id" separator=" or "/>
+            </xpath>
+            <xpath expr="//field[@name='counterpart_rate']" position="attributes">
+                <attribute name="readonly" add="l10n_ve_customer_vat_invoice_id" separator=" or "/>
+            </xpath>
+            <xpath expr="//field[@name='counterpart_currency_amount']" position="attributes">
+                <attribute name="readonly" add="l10n_ve_customer_vat_invoice_id" separator=" or "/>
+            </xpath>
+            <xpath expr="//field[@name='user_accounting_rate']" position="attributes">
+                <attribute name="readonly" add="l10n_ve_customer_vat_invoice_id" separator=" or "/>
+            </xpath>
+            <xpath expr="//field[@name='write_off_amount']" position="attributes">
+                <attribute name="readonly" add="l10n_ve_customer_vat_invoice_id" separator=" or "/>
+            </xpath>
             <page name="paid" position="after">
                 <page name="withholdings_page" string="Withholdings" invisible="is_internal_transfer or not use_payment_pro or country_code != 'VE'">
                     <group>
@@ -38,7 +77,7 @@
                             <field name="company_id" column_invisible="True"/>
                             <field name="currency_id" column_invisible="True"/>
                             <field name="state" readonly="1"/>
-                            <field name="tax_id" domain="[('l10n_ve_withholding_payment_type', '=', parent.partner_type), ('company_id', 'parent_of', parent.company_id)]" options="{'no_create': True}"/>
+                            <field name="tax_id" domain="[('l10n_ve_withholding_payment_type', '=', parent.partner_type), ('company_id', 'parent_of', parent.company_id)]" options="{'no_create': True}" readonly="parent.l10n_ve_customer_vat_invoice_id"/>
                             <field name="l10n_ve_concept_withholding" column_invisible="not parent.l10n_ve_withholding_islr" readonly="l10n_ve_tax_type == 'partner_tax'" />
                             <field name="move_line_id" column_invisible="True" />
                             <field name="product_id"
@@ -51,9 +90,9 @@
                                 domain="[('id', 'in', parent.l10n_ve_partner_regimen_islr_ids)]"
                                 options="{'no_create': True}"
                                 />
-                            <field name="name" readonly="withholding_sequence_id" required="parent.partner_type == 'customer'" />
+                            <field name="name" readonly="withholding_sequence_id and not parent.l10n_ve_customer_vat_invoice_id" required="parent.partner_type == 'customer'" />
                             <field name="base_amount" column_invisible="parent.partner_type != 'supplier'"/>
-                            <field name="amount" readonly="parent.partner_type == 'supplier'" force_save="1"/>
+                            <field name="amount" readonly="parent.partner_type == 'supplier' or parent.l10n_ve_customer_vat_invoice_id" force_save="1"/>
                             <field name="ref" optional="hide"/>
                             <button name="%(action_report_withholding_certificate_iva)d" invisible="l10n_ve_tax_type != 'partner_tax'" icon="fa-print " title="Imprimir comprobante IVA" type="action" />
                             <button name="%(action_report_withholding_certificate)d" invisible="l10n_ve_tax_type != 'tabla_islr'" icon="fa-print " title="Imprimir comprobante ISLR" type="action" />

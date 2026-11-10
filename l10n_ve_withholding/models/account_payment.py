@@ -18,6 +18,15 @@ _logger = logging.getLogger(__name__)
 class AccountPayment(models.Model):
     _inherit = "account.payment"
 
+    l10n_ve_customer_vat_invoice_id = fields.Many2one(
+        'account.move',
+        string='Factura de retención IVA',
+        check_company=True,
+        readonly=True,
+        copy=False,
+        index=True,
+    )
+
     l10n_ve_withholding_islr = fields.Boolean(
         '¿Aplicar Retención ISLR?',
         default=False
@@ -119,6 +128,20 @@ class AccountPayment(models.Model):
         """Allocate a supplier retention to the historical bases of its invoices."""
         self.ensure_one()
         company_currency = self.company_currency_id
+        invoice = self.l10n_ve_customer_vat_invoice_id
+        if invoice:
+            rate = invoice.invoice_currency_rate if invoice.currency_id != company_currency else 1.0
+            if not rate:
+                raise UserError(_('La factura no tiene una tasa de cambio válida.'))
+            return [{
+                'move': invoice,
+                'withholding': withholding,
+                'currency': invoice.currency_id,
+                'amount': withholding.amount,
+                'amount_currency': invoice.currency_id.round(withholding.amount * rate),
+                'base_amount': withholding.base_amount,
+                'base_amount_currency': invoice.currency_id.round(withholding.base_amount * rate),
+            }]
         if (
             self.partner_type != 'supplier'
             or company_currency.is_zero(withholding.amount)
@@ -333,9 +356,15 @@ class AccountPayment(models.Model):
         'l10n_ve_withholding_line_ids.tax_id',
         'l10n_ve_withholding_line_ids.state',
         'date',
-        'currency_id')
+        'currency_id',
+        'l10n_ve_customer_vat_invoice_id')
     def _compute_l10n_ve_withholding_taxed(self):
         for payment in self:
+            if payment.l10n_ve_customer_vat_invoice_id:
+                tax_lines = payment.l10n_ve_customer_vat_invoice_id._get_l10n_ve_customer_vat_lines()
+                payment.l10n_ve_withholding_taxed = -sum(tax_lines.mapped('balance'))
+                payment.l10n_ve_move_line_taxes_ids = [Command.set(tax_lines.ids)]
+                continue
             withholding_taxed = 0.0
             move_line_tax_ids = []
             withholding_taxes = payment._get_l10n_ve_active_withholding_lines().filtered(
@@ -394,6 +423,23 @@ class AccountPayment(models.Model):
             if rec.company_currency_id.is_zero(rec.l10n_ve_withholdings_amount):
                 continue
             rec.action_adjust_amount_for_difference()
+
+    def action_adjust_amount_for_difference(self):
+        payments = self.filtered(lambda payment: not payment.l10n_ve_customer_vat_invoice_id)
+        return super(AccountPayment, payments).action_adjust_amount_for_difference()
+
+    @api.depends(
+        'l10n_ve_customer_vat_invoice_id',
+        'l10n_ve_customer_vat_invoice_id.invoice_currency_rate',
+    )
+    def _compute_counterpart_rate(self):
+        super()._compute_counterpart_rate()
+        for payment in self.filtered('l10n_ve_customer_vat_invoice_id'):
+            invoice = payment.l10n_ve_customer_vat_invoice_id
+            if payment.currency_id == payment.company_currency_id and payment.counterpart_currency_id == invoice.currency_id:
+                payment.counterpart_rate = (
+                    invoice.invoice_currency_rate if invoice.currency_id != payment.company_currency_id else 1.0
+                )
 
     @api.onchange('l10n_ve_withholding_islr')
     def _onchange_l10n_ve_withholding_islr(self):
@@ -600,7 +646,56 @@ class AccountPayment(models.Model):
                 if vals:
                     move_lines.browse(line.id).write(vals)
 
+    def _check_l10n_ve_customer_vat_payment(self):
+        for payment in self.filtered('l10n_ve_customer_vat_invoice_id'):
+            invoice = payment.l10n_ve_customer_vat_invoice_id
+            invoice.lock_for_update()
+            withholdings = payment._get_l10n_ve_active_withholding_lines()
+            if (
+                invoice.state != 'posted'
+                or invoice.move_type != 'out_invoice'
+                or invoice.company_id != payment.company_id
+                or invoice.commercial_partner_id != payment.partner_id.commercial_partner_id
+                or payment.partner_type != 'customer'
+                or payment.payment_type != 'inbound'
+                or payment.is_internal_transfer
+                or payment.currency_id != payment.company_currency_id
+                or not payment.company_currency_id.is_zero(payment.amount)
+                or not payment.company_currency_id.is_zero(payment.amount_exact)
+                or not payment.destination_currency_id.is_zero(payment.write_off_amount)
+                or payment.to_pay_move_line_ids.move_id != invoice
+            ):
+                raise UserError(_(
+                    'Este pago debe contener únicamente la retención de IVA de su factura, '
+                    'en moneda de la compañía y sin importe bancario ni ajustes.'
+                ))
+            if len(withholdings) != 1 or not (
+                withholdings.tax_id.l10n_ve_withholding_payment_type == 'customer'
+                and (
+                    withholdings.tax_id.l10n_ve_withholding_ingoing_type == 'iva'
+                    or withholdings.tax_id.l10n_ve_tax_type == 'partner_tax'
+                )
+                and withholdings.amount > 0.0
+                and withholdings.name and withholdings.name.strip() not in ('', '/')
+                and withholdings.date
+            ):
+                raise UserError(_('Complete el número y la fecha de una única retención de IVA en ventas.'))
+            previous = invoice.l10n_ve_withholding_ids.filtered(
+                lambda line: line.payment_id != payment and line.state != 'cancel'
+                and line.tax_id.l10n_ve_withholding_payment_type == 'customer'
+                and (
+                    line.tax_id.l10n_ve_withholding_ingoing_type == 'iva'
+                    or line.tax_id.l10n_ve_tax_type == 'partner_tax'
+                )
+            )
+            if previous:
+                raise UserError(_('Esta factura ya tiene una retención de IVA registrada.'))
+            allocation = payment._get_l10n_ve_withholding_allocations(withholdings)[0]
+            if invoice.currency_id.compare_amounts(allocation['amount_currency'], invoice.amount_residual) > 0:
+                raise UserError(_('La retención calculada supera el saldo pendiente de la factura.'))
+
     def action_post(self):
+        self._check_l10n_ve_customer_vat_payment()
         for payment in self:
             if payment.to_pay_move_line_ids:
                 to_pay_moves = payment.to_pay_move_line_ids.mapped('move_id')
@@ -717,6 +812,7 @@ class AccountPayment(models.Model):
             if 'amount' in changed_fields and len(liquidity) > 1:
                 raise UserError(_("You cannot change the amount of a payment with multiple liquidity lines."))
             values = payment._prepare_move_lines_per_type()
+            payment._l10n_ve_set_customer_vat_counterpart_currency(values.get('counterpart_lines', []))
             commands = []
             for old_lines, key in ((liquidity, 'liquidity_lines'), (counterparts, 'counterpart_lines')):
                 for line, new_values in zip_longest(old_lines, values.get(key, [])):
@@ -739,7 +835,39 @@ class AccountPayment(models.Model):
             }
             if 'journal_id' in changed_fields:
                 move_values.update(name='/', journal_id=payment.journal_id.id)
+            invoice = payment.l10n_ve_customer_vat_invoice_id
+            if invoice and 'rate_invoice_journal' in invoice._fields:
+                move_values['rate_invoice_journal'] = invoice.rate_invoice_journal
             payment.move_id.with_context(skip_invoice_sync=True).write(move_values)
+
+    def _l10n_ve_set_customer_vat_counterpart_currency(self, line_values):
+        self.ensure_one()
+        invoice = self.l10n_ve_customer_vat_invoice_id
+        if not invoice:
+            return
+        rate = invoice.invoice_currency_rate if invoice.currency_id != self.company_currency_id else 1.0
+        for values in line_values:
+            if values.get('account_id') == self.destination_account_id.id:
+                balance = values.get('balance', values.get('debit', 0.0) - values.get('credit', 0.0))
+                values.update({
+                    'currency_id': invoice.currency_id.id,
+                    'amount_currency': invoice.currency_id.round(balance * rate),
+                })
+
+    def _prepare_move_line_default_vals(self, write_off_line_vals=None, force_balance=None):
+        values = super()._prepare_move_line_default_vals(
+            write_off_line_vals=write_off_line_vals, force_balance=force_balance,
+        )
+        # Restore the invoice currency after payment adapters prepare the final lines.
+        self._l10n_ve_set_customer_vat_counterpart_currency(values)
+        return values
+
+    def _generate_move_vals(self, write_off_line_vals=None, force_balance=None, line_ids=None):
+        values = super()._generate_move_vals(write_off_line_vals, force_balance, line_ids)
+        invoice = self.l10n_ve_customer_vat_invoice_id
+        if invoice and 'rate_invoice_journal' in invoice._fields:
+            values['rate_invoice_journal'] = invoice.rate_invoice_journal
+        return values
 
     def _prepare_move_lines_per_type(self, write_off_line_vals=None, force_balance=None):
         res = super()._prepare_move_lines_per_type(write_off_line_vals=write_off_line_vals, force_balance=force_balance)

@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<odoo>
+    <record id="view_customer_vat_withholding_wizard" model="ir.ui.view">
+        <field name="name">l10n_ve.customer.vat.withholding.wizard.form</field>
+        <field name="model">l10n_ve.customer.vat.withholding.wizard</field>
+        <field name="arch" type="xml">
+            <form string="Aplicar Retención IVA">
+                <field name="move_id" invisible="1"/>
+                <group>
+                    <field name="number"/>
+                </group>
+                <footer>
+                    <button name="action_confirm" string="Aceptar" type="object" class="btn-primary"/>
+                    <button string="Cancelar" special="cancel" class="btn-secondary"/>
+                </footer>
+            </form>
+        </field>
+    </record>
+</odoo>

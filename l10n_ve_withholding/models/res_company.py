@@ -23,6 +23,15 @@ class ResCompany(models.Model):
         max_width=200,
         max_height=200
     )
+    l10n_ve_customer_vat_withholding = fields.Boolean(
+        string='Facturas clientes sujetas a retención',
+    )
+    l10n_ve_customer_vat_withholding_rate = fields.Selection(
+        selection=[('75', '75%'), ('100', '100%')],
+        string='Retención I.V.A',
+        default='75',
+        required=True,
+    )
 
     def _localization_use_withholdings(self):
         """ This method is to be inherited by localizations and return True
