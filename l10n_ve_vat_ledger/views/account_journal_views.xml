@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<odoo>
+    <!-- Retire this view before dependent modules validate the journal form. -->
+    <record id="account_journal_form_vat_book_emission" model="ir.ui.view">
+        <field name="name">account.journal.form.vat.book.emission</field>
+        <field name="model">account.journal</field>
+        <field name="inherit_id" ref="account.view_account_journal_form"/>
+        <field name="active" eval="False"/>
+        <field name="arch" type="xml">
+            <data/>
+        </field>
+    </record>
+</odoo>

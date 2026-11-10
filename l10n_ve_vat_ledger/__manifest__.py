@@ -17,7 +17,7 @@
 
     'author': "SINAPSYS GLOBAL SA || MASTERCORE SAS",
     'website': "http://sinapsys.global",
-    'version': '18.0.0.22',
+    'version': '18.0.0.23',
     'countries': ['ve'],
     'category': 'Accounting/Localizations',
     'license': 'AGPL-3',
@@ -31,6 +31,7 @@
     'data': [
         # 'security/security.xml',
         'security/ir.model.access.csv',
+        'views/account_journal_views.xml',
         'views/account_vat_ledger.xml',
         'views/account_move_views.xml',
         'views/res_partner_views.xml',
