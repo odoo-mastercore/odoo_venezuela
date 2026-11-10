@@ -21,6 +21,7 @@ class ResConfigSettings(models.TransientModel):
         readonly=False,
     )
     l10n_ve_customer_vat_withholding_journal_id = fields.Many2one(
+        string='Diario',
         related='company_id.l10n_ve_customer_vat_withholding_journal_id',
         readonly=False,
         check_company=True,
