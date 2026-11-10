@@ -13,10 +13,10 @@
         </field>
     </record>
 
-    <record id="view_account_payment_pro_form" model="ir.ui.view">
-        <field name="name">account.payment.pro.form.inherited</field>
+    <record id="view_account_payment_customer_vat_form" model="ir.ui.view">
+        <field name="name">account.payment.form.customer.vat.withholding</field>
         <field name="model">account.payment</field>
-        <field name="inherit_id" ref="account_payment_pro.latam_check_view_account_payment_form_inherited" />
+        <field name="inherit_id" ref="account_payment_pro.view_account_payment_form"/>
         <field name="arch" type="xml">
             <xpath expr="//field[@name='memo']" position="after">
                 <field name="l10n_ve_customer_vat_invoice_id" invisible="not l10n_ve_customer_vat_invoice_id"/>
@@ -39,9 +39,6 @@
             <xpath expr="//field[@name='payment_method_line_id']" position="attributes">
                 <attribute name="readonly" add="l10n_ve_customer_vat_invoice_id" separator=" or "/>
             </xpath>
-            <xpath expr="//field[@name='to_pay_move_line_ids']" position="attributes">
-                <attribute name="readonly" add="l10n_ve_customer_vat_invoice_id" separator=" or "/>
-            </xpath>
             <xpath expr="//field[@name='user_counterpart_rate']" position="attributes">
                 <attribute name="readonly" add="l10n_ve_customer_vat_invoice_id" separator=" or "/>
             </xpath>
@@ -55,6 +52,17 @@
                 <attribute name="readonly" add="l10n_ve_customer_vat_invoice_id" separator=" or "/>
             </xpath>
             <xpath expr="//field[@name='write_off_amount']" position="attributes">
+                <attribute name="readonly" add="l10n_ve_customer_vat_invoice_id" separator=" or "/>
+            </xpath>
+        </field>
+    </record>
+
+    <record id="view_account_payment_pro_form" model="ir.ui.view">
+        <field name="name">account.payment.pro.form.inherited</field>
+        <field name="model">account.payment</field>
+        <field name="inherit_id" ref="account_payment_pro.latam_check_view_account_payment_form_inherited"/>
+        <field name="arch" type="xml">
+            <xpath expr="//field[@name='to_pay_move_line_ids']" position="attributes">
                 <attribute name="readonly" add="l10n_ve_customer_vat_invoice_id" separator=" or "/>
             </xpath>
             <page name="paid" position="after">
