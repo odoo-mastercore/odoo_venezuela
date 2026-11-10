@@ -14,45 +14,6 @@ import re
 class AccountMove(models.Model):
     _inherit = 'account.move'
 
-    l10n_ve_vat_book_emission = fields.Selection(
-        selection=[
-            ('manual', 'Forma libre'),
-            ('digital', 'Factura digital'),
-            ('fiscal', 'Maquina fiscal'),
-        ],
-        string='Modalidad de emision',
-        compute='_compute_l10n_ve_vat_book_emission',
-        store=True,
-        readonly=False,
-        copy=True,
-        precompute=True,
-        tracking=True,
-    )
-
-    @api.depends(lambda model: ['move_type'] + (
-        ['pos_order_ids'] if 'pos_order_ids' in model._fields else []
-    ))
-    def _compute_l10n_ve_vat_book_emission(self):
-        for move in self:
-            emission = move._get_default_l10n_ve_vat_book_emission()
-            move.l10n_ve_vat_book_emission = (
-                'fiscal' if emission == 'fiscal'
-                else move.l10n_ve_vat_book_emission or emission
-            )
-
-    def _get_default_l10n_ve_vat_book_emission(self):
-        self.ensure_one()
-        if self.move_type in ('out_invoice', 'out_refund') and (
-            'pos_order_ids' in self._fields and self.sudo().pos_order_ids
-        ):
-            return 'fiscal'
-        return 'manual'
-
-    def _get_l10n_ve_vat_book_emission(self):
-        self.ensure_one()
-        emission = self._get_default_l10n_ve_vat_book_emission()
-        return 'fiscal' if emission == 'fiscal' else self.l10n_ve_vat_book_emission or emission
-
     l10n_ve_invoice_date = fields.Datetime(
         string='Fecha y hora de la factura',
         readonly=True,
