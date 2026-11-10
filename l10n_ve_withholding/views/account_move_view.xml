@@ -7,10 +7,11 @@
         <field name="arch" type="xml">
             <xpath expr="//header" position="inside">
                 <field name="l10n_ve_customer_vat_withholding" invisible="1"/>
+                <field name="l10n_ve_has_customer_vat_withholding" invisible="1"/>
                 <button name="action_apply_l10n_ve_customer_vat_withholding"
                     type="object" string="Aplicar Retención IVA"
                     groups="account.group_account_invoice"
-                    invisible="not l10n_ve_customer_vat_withholding or country_code != 'VE' or move_type != 'out_invoice' or state != 'posted' or amount_residual == 0"/>
+                    invisible="not l10n_ve_customer_vat_withholding or l10n_ve_has_customer_vat_withholding or country_code != 'VE' or move_type != 'out_invoice' or state != 'posted' or amount_residual == 0"/>
             </xpath>
             <xpath expr="//field[@name='ref']" position="after">
                 <field

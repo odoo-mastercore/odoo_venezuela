@@ -12,8 +12,17 @@
                 <setting id="l10n_ve_customer_vat_withholding_setting" string="Facturas clientes sujetas a retención" company_dependent="1" invisible="country_code != 'VE'">
                     <field name="l10n_ve_customer_vat_withholding"/>
                     <div class="content-group" invisible="not l10n_ve_customer_vat_withholding">
-                        <label for="l10n_ve_customer_vat_withholding_rate" class="me-2" string="Retención I.V.A:"/>
-                        <field name="l10n_ve_customer_vat_withholding_rate" class="oe_inline" required="l10n_ve_customer_vat_withholding"/>
+                        <div class="row mt16">
+                            <label for="l10n_ve_customer_vat_withholding_rate" class="col-lg-3 o_light_label" string="Retención I.V.A:"/>
+                            <field name="l10n_ve_customer_vat_withholding_rate" required="l10n_ve_customer_vat_withholding"/>
+                        </div>
+                        <div class="row mt16">
+                            <label for="l10n_ve_customer_vat_withholding_journal_id" class="col-lg-3 o_light_label"/>
+                            <field name="l10n_ve_customer_vat_withholding_journal_id"
+                                required="l10n_ve_customer_vat_withholding"
+                                domain="[('company_id', '=', company_id), ('type', 'in', ('bank', 'cash')), ('currency_id', 'in', [False, currency_id])]"
+                                options="{'no_create': True}"/>
+                        </div>
                     </div>
                 </setting>
                 <setting id="l10n_ve_withholding_tax" string="Withholding"  company_dependent="1" title="Account that will be set on lines created to represent the tax base amounts.">

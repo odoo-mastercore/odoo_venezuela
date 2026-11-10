@@ -99,9 +99,10 @@
                                 options="{'no_create': True}"
                                 />
                             <field name="name" readonly="withholding_sequence_id and not parent.l10n_ve_customer_vat_invoice_id" required="parent.partner_type == 'customer'" />
-                            <field name="base_amount" column_invisible="parent.partner_type != 'supplier'"/>
+                            <field name="base_amount" column_invisible="parent.partner_type != 'supplier' and not parent.l10n_ve_customer_vat_invoice_id" readonly="parent.l10n_ve_customer_vat_invoice_id"/>
                             <field name="amount" readonly="parent.partner_type == 'supplier' or parent.l10n_ve_customer_vat_invoice_id" force_save="1"/>
-                            <field name="ref" optional="hide"/>
+                            <field name="ref" optional="hide" column_invisible="parent.l10n_ve_customer_vat_invoice_id"/>
+                            <field name="ref" string="Cálculo" column_invisible="not parent.l10n_ve_customer_vat_invoice_id" readonly="1"/>
                             <button name="%(action_report_withholding_certificate_iva)d" invisible="l10n_ve_tax_type != 'partner_tax'" icon="fa-print " title="Imprimir comprobante IVA" type="action" />
                             <button name="%(action_report_withholding_certificate)d" invisible="l10n_ve_tax_type != 'tabla_islr'" icon="fa-print " title="Imprimir comprobante ISLR" type="action" />
                         </list>

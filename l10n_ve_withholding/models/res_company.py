@@ -32,6 +32,12 @@ class ResCompany(models.Model):
         default='75',
         required=True,
     )
+    l10n_ve_customer_vat_withholding_journal_id = fields.Many2one(
+        'account.journal',
+        string='Diario de retenciones IVA de clientes',
+        check_company=True,
+        domain=[('type', 'in', ('bank', 'cash'))],
+    )
 
     def _localization_use_withholdings(self):
         """ This method is to be inherited by localizations and return True

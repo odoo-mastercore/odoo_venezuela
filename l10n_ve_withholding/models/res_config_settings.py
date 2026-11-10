@@ -20,6 +20,11 @@ class ResConfigSettings(models.TransientModel):
         related='company_id.l10n_ve_customer_vat_withholding_rate',
         readonly=False,
     )
+    l10n_ve_customer_vat_withholding_journal_id = fields.Many2one(
+        related='company_id.l10n_ve_customer_vat_withholding_journal_id',
+        readonly=False,
+        check_company=True,
+    )
 
     l10n_ve_tax_base_account_id = fields.Many2one(
         comodel_name='account.account',

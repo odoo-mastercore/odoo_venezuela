@@ -33,6 +33,33 @@ class AccountMove(models.Model):
     l10n_ve_customer_vat_withholding = fields.Boolean(
         related='company_id.l10n_ve_customer_vat_withholding',
     )
+    l10n_ve_has_customer_vat_withholding = fields.Boolean(
+        compute='_compute_l10n_ve_has_customer_vat_withholding',
+    )
+
+    @api.depends(
+        'move_type',
+        'l10n_ve_withholding_ids.state',
+        'l10n_ve_withholding_ids.amount',
+        'l10n_ve_withholding_ids.tax_id.l10n_ve_withholding_payment_type',
+        'l10n_ve_withholding_ids.tax_id.l10n_ve_withholding_ingoing_type',
+        'l10n_ve_withholding_ids.tax_id.l10n_ve_tax_type',
+        'l10n_ve_withholding_ids.payment_id.state',
+        'l10n_ve_withholding_ids.payment_id.move_id.state',
+    )
+    def _compute_l10n_ve_has_customer_vat_withholding(self):
+        for move in self:
+            move.l10n_ve_has_customer_vat_withholding = move.move_type == 'out_invoice' and any(
+                line.state == 'posted' and line.amount > 0.0
+                and line.payment_id.state != 'canceled'
+                and line.payment_id.move_id.state == 'posted'
+                and line.tax_id.l10n_ve_withholding_payment_type == 'customer'
+                and (
+                    line.tax_id.l10n_ve_withholding_ingoing_type == 'iva'
+                    or line.tax_id.l10n_ve_tax_type == 'partner_tax'
+                )
+                for line in move.l10n_ve_withholding_ids
+            )
 
     def _get_l10n_ve_customer_vat_lines(self):
         self.ensure_one()
@@ -60,6 +87,19 @@ class AccountMove(models.Model):
                 'La retención de IVA requiere una factura de cliente publicada '
                 'y la configuración de retenciones y pagos avanzados activa en la compañía.'
             ))
+        journal = self.company_id.l10n_ve_customer_vat_withholding_journal_id
+        if (
+            not journal or not journal.active
+            or journal.company_id != self.company_id
+            or journal.type not in ('bank', 'cash')
+            or journal.currency_id and journal.currency_id != self.company_id.currency_id
+        ):
+            raise UserError(_(
+                'Configure el diario de retenciones IVA de clientes en los ajustes de Venezuela. '
+                'Debe ser un diario activo de banco o efectivo, de esta compañía y en su moneda principal.'
+            ))
+        if self.l10n_ve_has_customer_vat_withholding:
+            raise UserError(_('Esta factura ya tiene una retención de IVA aplicada.'))
 
     def action_apply_l10n_ve_customer_vat_withholding(self):
         self._check_l10n_ve_customer_vat_withholding()
@@ -107,9 +147,8 @@ class AccountMove(models.Model):
             raise UserError(_('La factura no tiene deuda pendiente para aplicar una retención.'))
         company_currency = self.company_id.currency_id
         base_amount = company_currency.round(-sum(self._get_l10n_ve_customer_vat_lines().mapped('balance')))
-        amount = company_currency.round(
-            base_amount * int(self.company_id.l10n_ve_customer_vat_withholding_rate) / 100.0
-        )
+        withholding_rate = self.company_id.l10n_ve_customer_vat_withholding_rate
+        amount = company_currency.round(base_amount * int(withholding_rate) / 100.0)
         if amount <= 0.0:
             raise UserError(_('La factura no tiene IVA contable sujeto a retención.'))
         invoice_rate = self.invoice_currency_rate if self.currency_id != company_currency else 1.0
@@ -129,17 +168,13 @@ class AccountMove(models.Model):
             raise UserError(_(
                 'Configure un único impuesto de retención de IVA en ventas para esta compañía.'
             ))
-        method = self.env['account.payment.method.line'].search([
-            ('journal_id.company_id', '=', self.company_id.id),
-            ('journal_id.type', 'in', ('bank', 'cash')),
-            ('journal_id.active', '=', True),
-            ('journal_id.currency_id', 'in', [False, company_currency.id]),
-            ('payment_method_id.code', '=', 'manual'),
-            ('payment_method_id.payment_type', '=', 'inbound'),
-        ], limit=1)
+        journal = self.company_id.l10n_ve_customer_vat_withholding_journal_id
+        method = journal.inbound_payment_method_line_ids.filtered(
+            lambda line: line.payment_method_id.code == 'manual'
+        )[:1]
         if not method:
             raise UserError(_(
-                'Configure un diario de banco o efectivo en moneda de la compañía con un método de cobro manual.'
+                'Configure un método de cobro manual en el diario de retenciones IVA de clientes.'
             ))
         date = fields.Date.context_today(self)
         # The wizard's default_move_id must not become the payment's journal entry.
@@ -150,7 +185,7 @@ class AccountMove(models.Model):
             'partner_id': self.commercial_partner_id.id,
             'partner_type': 'customer',
             'payment_type': 'inbound',
-            'journal_id': method.journal_id.id,
+            'journal_id': journal.id,
             'payment_method_line_id': method.id,
             'currency_id': company_currency.id,
             'date': date,
@@ -164,6 +199,7 @@ class AccountMove(models.Model):
                 'date': date,
                 'base_amount': base_amount,
                 'amount': amount,
+                'ref': f'({base_amount} * {withholding_rate}%)',
             })],
         })
         if not payment.use_payment_pro:
