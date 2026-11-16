@@ -768,6 +768,47 @@ class AccountPayment(models.Model):
 
         return res
 
+    def _get_l10n_ve_customer_withholding_currency_data(self):
+        """Customer retentions follow the explicitly selected allocation currency/rate."""
+        self.ensure_one()
+        currency = self.counterpart_currency_id
+        if (
+            self.partner_type != 'customer'
+            or not self.company_id.use_payment_pro
+            or self.currency_id != self.company_currency_id
+            or not currency
+            or currency == self.company_currency_id
+            or not self._get_l10n_ve_effective_withholding_lines()
+        ):
+            return None
+        if self.counterpart_exchange_rate <= 0:
+            raise UserError(_('Indique una tasa de imputación mayor que cero para la retención.'))
+        return {
+            'currency': currency,
+            'conversion_rate': self.counterpart_exchange_rate,
+        }
+
+    @api.model
+    def _get_foreign_currency_rate_override_dependencies(self):
+        return (
+            'partner_type', 'currency_id', 'company_id.use_payment_pro', 'counterpart_currency_id',
+            'counterpart_exchange_rate', 'l10n_ve_withholding_line_ids.amount',
+            'l10n_ve_withholding_line_ids.state',
+        )
+
+    def _get_foreign_currency_rate_override(self, currency):
+        """Optional bridge for the move's secondary-currency calculations."""
+        self.ensure_one()
+        data = self._get_l10n_ve_customer_withholding_currency_data()
+        if not data or not currency:
+            return 0.0
+        if currency == self.company_currency_id:
+            return 1.0
+        return data['conversion_rate'] * currency._convert(
+            1.0, data['currency'], self.company_id,
+            self.date or fields.Date.context_today(self), round=False,
+        )
+
     def _get_withholding_foreign_currency_data(self):
         """Detect foreign debt currency and conversion rate from invoice rate.
 
@@ -775,6 +816,9 @@ class AccountPayment(models.Model):
         amount_currency/currency_id in invoice foreign currency (e.g. USD).
         """
         self.ensure_one()
+        customer_currency_data = self._get_l10n_ve_customer_withholding_currency_data()
+        if customer_currency_data:
+            return customer_currency_data
         company_currency = self.company_id.currency_id
         debt_lines = self.to_pay_move_line_ids._origin
         if not debt_lines:
