@@ -18,6 +18,8 @@ class AccountPayment(models.Model):
         'account.move', string='Factura de retención IVA', check_company=True,
         readonly=True, copy=False, index=True,
     )
+    l10n_ve_customer_vat_rate = fields.Float(readonly=True, copy=False, digits=0)
+    l10n_ve_customer_vat_secondary_rate = fields.Float(readonly=True, copy=False, digits=0)
     l10n_ve_withholding_islr = fields.Boolean(
         '¿Aplicar Retención ISLR?',
         default=False
@@ -673,7 +675,7 @@ class AccountPayment(models.Model):
                 and withholdings.name and withholdings.name.strip() not in ('', '/')
             ):
                 raise UserError(_('Complete el número y la fecha de una única retención de IVA en ventas.'))
-            rate = invoice._get_l10n_ve_customer_vat_allocation_rate()
+            rate = payment._get_l10n_ve_customer_vat_payment_rate()
             allocated = withholdings.amount * rate
             if rate <= 0.0 or invoice.currency_id.is_zero(allocated):
                 raise UserError(_('La retención no tiene un importe válido en la moneda de la factura.'))
@@ -813,13 +815,17 @@ class AccountPayment(models.Model):
 
         return res
 
-    @api.depends('l10n_ve_customer_vat_invoice_id.invoice_currency_rate')
+    def _get_l10n_ve_customer_vat_payment_rate(self):
+        self.ensure_one()
+        return self.l10n_ve_customer_vat_rate or self.l10n_ve_customer_vat_invoice_id._get_l10n_ve_customer_vat_allocation_rate()
+
+    @api.depends('l10n_ve_customer_vat_rate')
     def _compute_counterpart_exchange_rate(self):
         super()._compute_counterpart_exchange_rate()
         for payment in self.filtered('l10n_ve_customer_vat_invoice_id'):
             invoice = payment.l10n_ve_customer_vat_invoice_id
             if payment.counterpart_currency_id == invoice.currency_id:
-                rate = invoice._get_l10n_ve_customer_vat_allocation_rate()
+                rate = payment._get_l10n_ve_customer_vat_payment_rate()
                 payment.counterpart_exchange_rate = 1.0 / rate if rate > 0.0 else 0.0
 
     def _prepare_move_line_default_vals(self, write_off_line_vals=None, force_balance=None):
@@ -828,7 +834,7 @@ class AccountPayment(models.Model):
         )
         invoice = self.l10n_ve_customer_vat_invoice_id
         if invoice:
-            rate = invoice._get_l10n_ve_customer_vat_allocation_rate()
+            rate = self._get_l10n_ve_customer_vat_payment_rate()
             # The Payment Pro adapters may set the currency by line position.
             for line in values:
                 if line.get('account_id') == self.destination_account_id.id or line.get('l10n_ve_withholding_line_id'):
@@ -843,7 +849,7 @@ class AccountPayment(models.Model):
         if invoice:
             if invoice.currency_id == self.company_currency_id:
                 return None
-            rate = invoice._get_l10n_ve_customer_vat_allocation_rate()
+            rate = self._get_l10n_ve_customer_vat_payment_rate()
             if rate <= 0.0:
                 raise UserError(_('La factura no tiene una tasa de cambio válida.'))
             return {'currency': invoice.currency_id, 'conversion_rate': 1.0 / rate}
@@ -864,15 +870,6 @@ class AccountPayment(models.Model):
             'conversion_rate': self.counterpart_exchange_rate,
         }
 
-    @api.model
-    def _get_foreign_currency_rate_override_dependencies(self):
-        return (
-            'partner_type', 'currency_id', 'company_id.use_payment_pro', 'counterpart_currency_id',
-            'counterpart_exchange_rate', 'l10n_ve_withholding_line_ids.amount',
-            'l10n_ve_withholding_line_ids.state', 'l10n_ve_customer_vat_invoice_id',
-            'l10n_ve_customer_vat_invoice_id.invoice_currency_rate',
-        )
-
     def _get_foreign_currency_rate_override(self, currency):
         """Optional bridge for the move's secondary-currency calculations."""
         self.ensure_one()
@@ -881,9 +878,11 @@ class AccountPayment(models.Model):
             if currency == self.company_currency_id:
                 return 1.0
             if currency == invoice.currency_id:
-                rate = invoice._get_l10n_ve_customer_vat_allocation_rate()
+                rate = self._get_l10n_ve_customer_vat_payment_rate()
                 return 1.0 / rate if rate > 0.0 else 0.0
             if currency == getattr(invoice, 'company_foreign_currency_id', False):
+                if self.l10n_ve_customer_vat_rate:
+                    return self.l10n_ve_customer_vat_secondary_rate
                 return getattr(invoice, 'rate_invoice_journal', 0.0)
         data = self._get_l10n_ve_customer_withholding_currency_data()
         if not data or not currency:

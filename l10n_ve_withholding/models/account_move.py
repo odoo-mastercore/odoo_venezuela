@@ -6,7 +6,7 @@
 #
 #
 ###############################################################################
-from odoo import Command, _, api, fields, models
+from odoo import Command, _, fields, models
 from odoo.exceptions import UserError, ValidationError
 from odoo.tools import SQL
 
@@ -38,13 +38,6 @@ class AccountMove(models.Model):
         compute='_compute_l10n_ve_has_customer_vat_withholding',
     )
 
-    @api.depends(
-        'move_type', 'l10n_ve_withholding_ids.state', 'l10n_ve_withholding_ids.amount',
-        'l10n_ve_withholding_ids.payment_id.state', 'l10n_ve_withholding_ids.payment_id.move_id.state',
-        'l10n_ve_withholding_ids.tax_id.l10n_ve_tax_type',
-        'l10n_ve_withholding_ids.tax_id.l10n_ve_withholding_payment_type',
-        'l10n_ve_withholding_ids.tax_id.l10n_ve_withholding_ingoing_type',
-    )
     def _compute_l10n_ve_has_customer_vat_withholding(self):
         for move in self:
             move.l10n_ve_has_customer_vat_withholding = move.move_type == 'out_invoice' and any(
@@ -142,6 +135,7 @@ class AccountMove(models.Model):
         if not number or number == '/':
             raise UserError(_('Indique el número de comprobante de retención.'))
         self._lock_l10n_ve_customer_vat_invoice()
+        self.invalidate_recordset(['l10n_ve_has_customer_vat_withholding'], flush=False)
         journal = self._check_l10n_ve_customer_vat_withholding()
         self._check_l10n_ve_customer_vat_duplicate()
 
@@ -181,6 +175,8 @@ class AccountMove(models.Model):
         Payment = self.env['account.payment'].with_context(context).with_company(self.company_id)
         vals = {
             'l10n_ve_customer_vat_invoice_id': self.id,
+            'l10n_ve_customer_vat_rate': rate,
+            'l10n_ve_customer_vat_secondary_rate': getattr(self, 'rate_invoice_journal', 0.0),
             'company_id': self.company_id.id,
             'partner_id': self.commercial_partner_id.id,
             'partner_type': 'customer',
