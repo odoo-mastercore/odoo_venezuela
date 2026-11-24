@@ -60,6 +60,12 @@ class AccountTax(models.Model):
         string='Tipo de Retención'
     )
 
+    def _is_l10n_ve_customer_vat_withholding(self):
+        return (
+            self.l10n_ve_withholding_payment_type == 'customer'
+            and (self.l10n_ve_withholding_ingoing_type == 'iva' or self.l10n_ve_tax_type == 'partner_tax')
+        )
+
     @api.depends('type_tax_use', 'l10n_ve_withholding_payment_type')
     def _compute_l10n_ve_type_tax_use(self):
         for tax in self:

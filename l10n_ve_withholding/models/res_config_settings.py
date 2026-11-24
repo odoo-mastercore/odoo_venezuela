@@ -19,3 +19,13 @@ class ResConfigSettings(models.TransientModel):
         domain=[('deprecated', '=', False)],
         string="Tax Base Account",
         help="Account that will be set on lines created to represent the tax base amounts.")
+
+    l10n_ve_customer_vat_withholding = fields.Boolean(
+        related='company_id.l10n_ve_customer_vat_withholding', readonly=False,
+    )
+    l10n_ve_customer_vat_withholding_rate = fields.Selection(
+        related='company_id.l10n_ve_customer_vat_withholding_rate', readonly=False,
+    )
+    l10n_ve_customer_vat_withholding_journal_id = fields.Many2one(
+        related='company_id.l10n_ve_customer_vat_withholding_journal_id', readonly=False,
+    )
