@@ -28,6 +28,15 @@ class AccountMove(models.Model):
         'Retencion de ISLR aplicada', compute='_compute_applied_withholding',
         store=True, copy=False, default=False)
 
+    def unlink(self):
+        if self:
+            payments = self.env['account.payment'].sudo().search([
+                ('move_id', 'in', self.ids),
+                ('withholding_number', '!=', False),
+            ])
+            payments._l10n_ve_check_numbered_withholding_unlink()
+        return super().unlink()
+
     @api.depends('amount_residual', 'amount_residual_signed',)
     def _compute_applied_withholding(self):
         for rec in self:

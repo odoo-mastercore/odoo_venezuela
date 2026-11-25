@@ -6,6 +6,7 @@
 #
 ###############################################################################
 from odoo import models, fields, api, _
+from odoo.exceptions import UserError
 import logging
 
 _logger = logging.getLogger(__name__)
@@ -22,6 +23,84 @@ class AccountPayment(models.Model):
         'withholding.distribution', 'payment_id',
         string='distribucion de retencion'
     )
+    l10n_ve_cancelled_payment_group_id = fields.Many2one(
+        'account.payment.group',
+        string='Grupo original de la retención cancelada',
+        readonly=True,
+        copy=False,
+        check_company=True,
+        ondelete='restrict',
+    )
+
+    def _l10n_ve_numbered_withholdings(self):
+        return self.filtered(lambda payment: (payment.withholding_number or '').strip() not in ('', '/'))
+
+    def _l10n_ve_check_numbered_withholding_unlink(self):
+        if self._l10n_ve_numbered_withholdings():
+            raise UserError(_(
+                'No puede eliminar una retención con número de comprobante. '
+                'Cancélela o quítela de las líneas activas de su grupo de pago.'
+            ))
+
+    def unlink(self):
+        self._l10n_ve_check_numbered_withholding_unlink()
+        return super().unlink()
+
+    def write(self, vals):
+        if not {'payment_group_id', 'withholding_number'} & vals.keys():
+            return super().write(vals)
+
+        numbered = self._l10n_ve_numbered_withholdings()
+        if not numbered:
+            return super().write(vals)
+        if 'withholding_number' in vals and str(vals['withholding_number'] or '').strip() in ('', '/'):
+            raise UserError(_('No puede borrar el número de comprobante de una retención.'))
+        if 'payment_group_id' not in vals:
+            return super().write(vals)
+
+        group_id = vals['payment_group_id']
+        if group_id:
+            if numbered.filtered(lambda payment: (
+                payment.l10n_ve_cancelled_payment_group_id
+                or (payment.payment_group_id and payment.payment_group_id.id != group_id)
+            )):
+                raise UserError(_('No puede trasladar a otro grupo una retención con número de comprobante.'))
+            return super().write(vals)
+
+        to_cancel = numbered.filtered('payment_group_id')
+        if not to_cancel:
+            return super().write(vals)
+        if to_cancel.payment_group_id.filtered(lambda group: group.state not in ('draft', 'confirmed')):
+            raise UserError(_('Para quitar una retención numerada, vuelva primero el grupo de pago a borrador.'))
+        if ('state' in vals and vals['state'] != 'cancel') or (
+            'withholding_number' in vals
+            and to_cancel.filtered(lambda payment: payment.withholding_number != vals['withholding_number'])
+        ):
+            raise UserError(_('Al quitar una retención debe quedar cancelada con su mismo número de comprobante.'))
+
+        to_cancel.check_access_rights('write')
+        to_cancel.check_access_rule('write')
+        original_groups = {
+            group: to_cancel.filtered(lambda payment: payment.payment_group_id == group)
+            for group in to_cancel.payment_group_id
+        }
+        with self.env.cr.savepoint():
+            # In v16 resetting the payment to draft removes its reconciliations.
+            posted = to_cancel.filtered(lambda payment: payment.state == 'posted')
+            if posted:
+                posted.action_draft()
+            active = to_cancel.filtered(lambda payment: payment.state != 'cancel')
+            if active:
+                active.action_cancel()
+            if to_cancel.filtered(lambda payment: payment.state != 'cancel'):
+                raise UserError(_('No se pudo cancelar la retención. La línea permanece en el grupo de pago.'))
+            for group, payments in original_groups.items():
+                super(AccountPayment, payments).write({
+                    **vals,
+                    'l10n_ve_cancelled_payment_group_id': group.id,
+                })
+            remaining = self - to_cancel
+            return super(AccountPayment, remaining).write(vals) if remaining else True
 
     def _get_fiscal_period(self, date):
         str_date = str(date).split('-')

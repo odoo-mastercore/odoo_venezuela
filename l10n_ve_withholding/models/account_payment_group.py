@@ -5,7 +5,7 @@
 #
 #
 ###############################################################################
-from odoo import models, api, fields, _
+from odoo import Command, models, api, fields, _
 from odoo.exceptions import ValidationError
 import json
 import logging
@@ -61,6 +61,28 @@ class AccountPaymentGroup(models.Model):
         string=_('Tercero'),
         comodel_name='res.partner',
     )
+
+    def unlink(self):
+        self.sudo().payment_ids._l10n_ve_check_numbered_withholding_unlink()
+        return super().unlink()
+
+    def write(self, vals):
+        commands = vals.get('payment_ids') or ()
+        delete_ids = [command[1] for command in commands if command[0] == Command.DELETE]
+        if delete_ids:
+            numbered_ids = set(
+                (self.payment_ids & self.env['account.payment'].browse(delete_ids))
+                ._l10n_ve_numbered_withholdings().ids
+            )
+            if numbered_ids:
+                # Removing a numbered line must detach it, not delete its payment.
+                vals = dict(vals, payment_ids=[
+                    Command.unlink(command[1])
+                    if command[0] == Command.DELETE and command[1] in numbered_ids
+                    else command
+                    for command in commands
+                ])
+        return super().write(vals)
 
     @api.onchange('withholding_distributin_islr')
     def _onchange_withholding_distributin_islr(self):
