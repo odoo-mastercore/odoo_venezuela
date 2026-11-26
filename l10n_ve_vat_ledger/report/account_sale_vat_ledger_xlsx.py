@@ -11,6 +11,13 @@ from odoo import _, models
 from odoo.exceptions import UserError
 
 
+_SALE_RATE_LABELS = {
+    16: 'Alicuota General',
+    8: 'Alicuota Reducida',
+    'additional': 'Alícuota Adicional (15% / 31%)',
+}
+
+
 class AccountSaleVatLedgerXlsx(models.AbstractModel):
     _inherit = 'report.l10n_ve_vat_ledger.account_vat_ledger_xlsx'
 
@@ -41,6 +48,13 @@ class AccountSaleVatLedgerXlsx(models.AbstractModel):
             if not ledger._has_sale_book_fiscal_source():
                 raise UserError(_('El formato fiscal requiere una integracion de reportes Z instalada.'))
             entries, covered_ids, warnings = ledger._get_sale_book_fiscal_entries(invoices)
+            for entry in entries:
+                values = entry['values']
+                values.update(
+                    base_additional=values.get('base_15', 0.0),
+                    iva_additional=values.get('iva_15', 0.0),
+                    alic_additional=values.get('alic_15', ''),
+                )
             missing = fiscal_moves.filtered(lambda move: move.id not in covered_ids)
             if missing:
                 raise UserError(_(
@@ -71,13 +85,12 @@ class AccountSaleVatLedgerXlsx(models.AbstractModel):
             elif kind == 'debit_note' and move.debit_origin_id:
                 values['affected'] = move._get_debit_name_vat_ledger() or ''
             values[emission + '_document'] = document
-            if emission == 'digital':
-                values['digital_control'] = move.l10n_ve_control_number or ''
+            if emission in ('manual', 'digital'):
+                values[emission + '_control'] = move.l10n_ve_control_number or ''
             values['debit_document'] = document if kind == 'debit_note' else ''
             values['credit_document'] = document if kind == 'credit_note' else ''
             breakdown = self._get_move_vat_breakdown(move)
-            values['exempt'] = 0.0 if canceled else breakdown['base_exempt']
-            for rate in (16, 8, 15):
+            for rate in (16, 8):
                 for key in ('base_%s' % rate, 'iva_%s' % rate):
                     values[key] = 0.0 if canceled else breakdown[key]
                 values['alic_%s' % rate] = '' if canceled else breakdown['alic_%s' % rate]
@@ -86,11 +99,21 @@ class AccountSaleVatLedgerXlsx(models.AbstractModel):
                 and round(abs(line.tax_line_id.amount), 2) == 31.0
             )
             sign = -1 if kind == 'credit_note' else 1
-            additional_base = 0.0 if canceled else sign * sum(abs(line.tax_base_amount) for line in additional_lines)
-            additional_tax = 0.0 if canceled else sign * sum(abs(line.balance) for line in additional_lines)
+            base_31 = self._round_book_amount(sign * sum(abs(line.tax_base_amount) for line in additional_lines))
+            tax_31 = self._round_book_amount(sign * sum(abs(line.balance) for line in additional_lines))
+            values.update(
+                exempt=0.0 if canceled else self._round_book_amount(breakdown['base_exempt'] - base_31),
+                base_additional=0.0 if canceled else breakdown['base_15'] + base_31,
+                iva_additional=0.0 if canceled else breakdown['iva_15'] + tax_31,
+                alic_additional='' if canceled else ' / '.join(
+                    label for label, applies in (
+                        ('15%', breakdown['base_15'] or breakdown['iva_15']),
+                        ('31%', base_31 or tax_31),
+                    ) if applies
+                ),
+            )
             entries.append({'values': values, 'emission': emission, 'kind': kind,
-                            'company_id': move.company_id.id, 'id': move.id,
-                            'summary_31': (additional_base, additional_tax)})
+                            'company_id': move.company_id.id, 'id': move.id})
         for withholding in withholdings:
             related_moves = self._get_withholding_related_moves(withholding)
             if related_moves:
@@ -120,16 +143,16 @@ class AccountSaleVatLedgerXlsx(models.AbstractModel):
             weights = {}
             for line in tax_lines:
                 rate = round(abs(line.tax_line_id.amount), 2)
-                if rate not in (16, 8, 31) or not line.balance:
+                if rate not in (16, 8, 15, 31) or not line.balance:
                     continue
                 kind = self._get_vat_book_document_kind(line.move_id)
-                key = ('invoice' if rate == 31 else kind, int(rate))
+                key = ('invoice', 'additional') if rate in (15, 31) else (kind, int(rate))
                 weights[key] = weights.get(key, 0.0) + abs(line.balance)
             entries.append({'values': values, 'emission': '', 'kind': 'withholding',
                             'company_id': withholding.company_id.id, 'id': withholding.id,
                             'summary_withholding_weights': weights})
         entries.sort(key=lambda entry: (
-            entry['values']['date'], entry['company_id'],
+            entry['values']['date'], entry['kind'] == 'withholding', entry['company_id'],
             entry['values'].get('printer', ''), entry['id'], entry['kind'],
         ))
         return entries, warnings
@@ -142,7 +165,7 @@ class AccountSaleVatLedgerXlsx(models.AbstractModel):
             (('export', 'exempt'), 'Total Ventas de Exportación'),
             (('invoice', 16), 'Total Ventas Internas afectadas sólo alícuota general (16,00%)'),
             (('invoice', 8), 'Total Ventas Internas afectadas sólo alícuota reducida (8,00%)'),
-            (('invoice', 31), 'Total Ventas Internas afectadas más adicional (31,00%)'),
+            (('invoice', 'additional'), 'Total Ventas Internas afectadas más adicional (15,00% / 31,00%)'),
             (('credit_note', 16), 'Total Notas de Crédito aplicadas en Ventas (16,00%)'),
             (('credit_note', 8), 'Total Notas de Crédito aplicadas en Ventas (8,00%)'),
             (('debit_note', 16), 'Total Notas de Débito aplicadas en Ventas (16,00%)'),
@@ -169,12 +192,11 @@ class AccountSaleVatLedgerXlsx(models.AbstractModel):
                     remaining -= allocated
                 continue
             kind = 'invoice' if entry['kind'] == 'fiscal' else entry['kind']
-            additional_base, additional_tax = entry.get('summary_31', (0.0, 0.0))
-            amounts[(kind, 'exempt')][0] += values.get('exempt', 0.0) - additional_base
-            for rate in (16, 8, 31):
-                base = additional_base if rate == 31 else values.get('base_%s' % rate, 0.0)
-                tax = additional_tax if rate == 31 else values.get('iva_%s' % rate, 0.0)
-                key = ('invoice' if rate == 31 else kind, rate)
+            amounts[(kind, 'exempt')][0] += values.get('exempt', 0.0)
+            for rate in _SALE_RATE_LABELS:
+                base = values.get('base_%s' % rate, 0.0)
+                tax = values.get('iva_%s' % rate, 0.0)
+                key = ('invoice' if rate == 'additional' else kind, rate)
                 amounts[key][0] += base + tax
                 amounts[key][1] += base
                 amounts[key][2] += tax
@@ -191,7 +213,10 @@ class AccountSaleVatLedgerXlsx(models.AbstractModel):
             ('vat', 'RIF'), ('partner', 'Nombre o razon social'),
         ]
         if 'manual' in emissions:
-            columns.append(('manual_document', 'Nro. de documento'))
+            columns.extend([
+                ('manual_document', 'Nro. de documento'),
+                ('manual_control', 'Nro. de control'),
+            ])
         if 'digital' in emissions:
             columns.extend([
                 ('digital_document', 'Nro. de documento'),
@@ -217,7 +242,7 @@ class AccountSaleVatLedgerXlsx(models.AbstractModel):
                 ('third_rate', '% alicuota'), ('third_tax', 'Impuesto IVA'),
             ])
             columns.append(('exempt', 'Ventas Internas No gravadas'))
-        for rate in (16, 8):
+        for rate in _SALE_RATE_LABELS:
             for emission in emissions:
                 columns.extend([
                     ('%s_base_%s' % (emission, rate), 'Base'),
@@ -274,6 +299,7 @@ class AccountSaleVatLedgerXlsx(models.AbstractModel):
         tax_widths = {
             16: {'manual': (103, 94, 110), 'digital': (114, 88, 113), 'fiscal': (93, 89, 104)},
             8: {'manual': (93, 82, 104), 'digital': (103, 81, 106), 'fiscal': (91, 88, 103)},
+            'additional': {emission: (103, 94, 110) for emission in emissions},
         }
         column_widths = {
             'operation': 128, 'date': 131, 'document_type': 129,
@@ -287,7 +313,7 @@ class AccountSaleVatLedgerXlsx(models.AbstractModel):
             sheet.set_column_pixels(column, column, column_widths.get(key, 189))
             sheet.write(header_row, column, label, header)
         for label, keys in (
-            ('Forma libre', ('manual_document',)),
+            ('Forma libre', ('manual_document', 'manual_control')),
             ('Factura Digital', ('digital_document', 'digital_control')),
             ('Maquina fiscal', ('z_number', 'printer', 'invoice_from', 'invoice_to')),
         ):
@@ -302,19 +328,15 @@ class AccountSaleVatLedgerXlsx(models.AbstractModel):
             sheet.merge_range(header_row - 1, positions['third_exempt'],
                               header_row - 1, positions['third_tax'],
                               'Ventas por cuenta de terceros', header)
-        sheet.merge_range(header_row - 3, positions['%s_base_16' % emissions[0]],
-                          header_row - 3, positions['%s_iva_8' % emissions[-1]],
+        sheet.merge_range(header_row - 3, positions['exempt'],
+                          header_row - 3, positions['%s_iva_additional' % emissions[-1]],
                           'Ventas Internas', header)
         emission_labels = {
             'manual': 'A Contribuyente Forma Libre',
             'digital': 'A Contribuyente Factura Digital',
             'fiscal': 'A Contribuyente Maquina Fiscal',
         }
-        rate_labels = {
-            16: 'Alicuota General',
-            8: 'Alicuota Reducida',
-        }
-        for rate, rate_label in rate_labels.items():
+        for rate, rate_label in _SALE_RATE_LABELS.items():
             for emission in emissions:
                 first = positions['%s_base_%s' % (emission, rate)]
                 last = positions['%s_iva_%s' % (emission, rate)]
@@ -326,11 +348,11 @@ class AccountSaleVatLedgerXlsx(models.AbstractModel):
         numeric_keys = {'total', 'exempt', 'third_exempt', 'third_base', 'third_tax', 'withheld'}
         rate_keys = set()
         for emission in emissions:
-            for rate in rate_labels:
+            for rate in _SALE_RATE_LABELS:
                 numeric_keys.update(('%s_base_%s' % (emission, rate), '%s_iva_%s' % (emission, rate)))
                 rate_keys.add('%s_alic_%s' % (emission, rate))
         identifier_keys = {
-            'operation', 'manual_document', 'digital_document', 'digital_control',
+            'operation', 'manual_document', 'manual_control', 'digital_document', 'digital_control',
             'voucher', 'affected', 'vat', 'z_number', 'printer',
             'invoice_from', 'invoice_to', 'debit_document', 'credit_document', 'third_rate',
         }
@@ -338,7 +360,7 @@ class AccountSaleVatLedgerXlsx(models.AbstractModel):
         for row, entry in enumerate(entries, start=first_data_row):
             values = dict(entry['values'], operation=row - first_data_row + 1)
             if entry['emission'] in emissions:
-                for rate in rate_labels:
+                for rate in _SALE_RATE_LABELS:
                     for key in ('base_%s' % rate, 'iva_%s' % rate, 'alic_%s' % rate):
                         values[entry['emission'] + '_' + key] = values.pop(key, '')
             for column, (key, label) in enumerate(columns):
@@ -356,9 +378,12 @@ class AccountSaleVatLedgerXlsx(models.AbstractModel):
                 if key in totals and isinstance(value, (int, float)):
                     totals[key] += value
         row = first_data_row + len(entries)
+        total_label_column = positions['total'] - 1
         for column, (key, label) in enumerate(columns):
-            sheet.write(row, column, totals.get(key, ''),
-                        total_label if key == 'partner' else total_format)
+            if column == total_label_column:
+                sheet.write_string(row, column, 'TOTAL', total_label)
+            else:
+                sheet.write(row, column, totals.get(key, ''), total_format)
         for detail_row in range(first_data_row, row + 1):
             sheet.set_row(detail_row, 13.55)
         row += 4
